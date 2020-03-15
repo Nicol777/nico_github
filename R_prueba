@@ -1,0 +1,158 @@
+# 0. PAQUETES
+rm(list=ls())
+
+if(!require("pacman")) install.packages("pacman")
+p_load("IntroCompFinR","quantmod", "ggplot2", "dplyr", "tidyverse")
+install.packages("plotly")
+library(plotly)
+packageVersion('plotly')
+
+library(PerformanceAnalytics)
+library("reshape2")
+
+install.packages("fPortfolio",dependencies=TRUE)
+install.packages("fAssets",dependencies=TRUE)
+install.packages("mnormt",dependencies=TRUE)
+install.packages("sn",dependencies=TRUE)
+install.packages("corpcor",dependencies=TRUE)
+install.packages("Rglpk", dependencies=TRUE)
+install.packages("PortfolioAnalytics")
+library(fPortfolio)
+library(fAssets)
+library(mnormt)
+library(sn)
+library(corpcor)
+library(Rglpk)
+library(PortfolioAnalytics)
+# IMPORTAR DATA
+library(readxl)
+securities <- read_excel("trabajo_upiura/Portafolio/base_de_datos.xlsx")
+
+# 1. EVALUACION ESTADISTICA
+# A. RETORNOS
+returns <- data.frame(apply(securities[,-c(1,8)], 2, function(x) Delt(x, type="log")),
+                       DATE = securities$DATE) %>%  na.omit() 
+
+return.r.free <- data.frame(apply(securities[,8], 2, function(x) Delt(x, type="log")),
+                            DATE = securities$DATE) %>%  na.omit()
+# B. RETORNOS ACUMULADOS
+returns.acum <- data.frame(apply(returns[1:10], 2, function(x) cumsum(x)), Date = securities$DATE[-1])                      
+                      
+
+# C. GRAFICAS
+#   C.1 RETORNOS ACUMULADOS
+reshape_1 <- melt(returns.acum, id.vars = "Date")
+
+g1 <- ggplot(reshape_1) + geom_line(mapping = aes(y = value, x= Date, color = variable), size=1)
+g1 <- g1 + labs(title = "Retornos Acumulados", subtitle = "ETFs")
+g1 <- g1 + xlab("Fecha") + ylab("Retornos Acumulados")
+g1 <- g1 + guides(color=guide_legend("ETF"))
+g1 <- g1 + theme_bw()
+g1 <- g1 + theme(legend.position = "bottom") 
+g1 <- ggplotly(g1)
+g1
+
+# C.2 MEDIA VS VARIANZA
+etfs <- c("ACWI", "IVV", "EZU",	"IEUR", "EWJ",	"EEM",	"LQD", "HYG", "EMB", "LEMB")
+
+mean.etfs <-  apply(returns[1:10], 2, mean)
+sd.etfs <- apply(returns[1:10], 2, sd)
+
+
+datafr.1 <- data.frame(Asset = etfs, Mean = mean.etfs, Sd = sd.etfs, row.names = NULL)
+datafr.1$Mean <- datafr.1$Mean*100
+datafr.1$Sd <- datafr.1$Sd*100
+
+g2 <- ggplot(datafr.1, aes(x = Sd , y = Mean, label = etfs))+
+  geom_point(aes(colour = Asset), size = 10, alpha = 0.7) +
+  geom_text(hjust = 0, nudge_x = 0.03, size = 4)+
+  ggtitle("Riesgo vs Rentabilidad de los ETFs")+
+  theme_bw() + guides(color="none") +
+  ylab("Rertorno esperado diario (%)") + xlab("Volatilidad diaria (%)") +
+  scale_alpha(guide = "none") #+
+  #scale_x_continuous(limits = c(1.5, 2.4))
+
+g2 <- ggplotly(g2)
+g2
+
+#c.2 MEDIAS MOVILES
+library(zoo) 
+acwi.mv <- securities[2]
+acwi.mv <- acwi.mv %>% mutate(ACWI_movil = rollmean(ACWI, k = 50, fill = NA, align = "right")) 
+acwi.mv <- data.frame(acwi.mv, Date = securities$DATE)
+  
+reshape_2 <- melt(acwi.mv, id.vars = "Date")
+
+g3 <- ggplot(reshape_2) + geom_line(mapping = aes(y = value, x= Date, color = variable), size=1)
+g3 <- g3 + labs(title = "Retornos Acumulados", subtitle = "ETFs")
+g3 <- g3 + xlab("Fecha") + ylab("Retornos Acumulados")
+g3 <- g3 + guides(color=guide_legend("ETF"))
+g3 <- g3 + theme_bw()
+g3 <- g3 + theme(legend.position = "bottom") 
+g3
+
+# D. OPTMIZACION
+portfolio <- data.frame(returns[c(1,2,4,5,7,8)]*100, Date = returns$DATE)
+mean.portfolio <- apply(portfolio[1:6], 2, mean) #ojoooo
+sd.portfolio <- apply(portfolio[1:6], 2, sd)
+cov.portfolio <- cov(portfolio[1:6])
+mean.r.free <- apply(return.r.free[1], 2, mean)
+
+qxts <- xts(portfolio[,-7], order.by=portfolio[,7])
+qxts <- as.timeSeries(qxts)
+
+covEstimator(qxts)
+plot(qxts)
+####################################################################################
+MV.1 <- portfolio.spec(colnames(qxts))
+
+MV.1 <- add.constraint(MV.1, type="weight_sum", min_sum=1, max_sum=1)
+MV.1 <- add.constraint(MV.1, type="box", min=0.1, max=0.5)
+MV.1 <- add.objective(MV.1, type = "return", name="mean")
+MV.1 <- add.objective(MV.1, type = "risk", name="StdDev")
+
+opt_pot <- optimize.portfolio(qxts, M.1, optimize_method = "ROI", trace = TRUE)
+
+####################################################################################
+#metodo 2
+MV.2<-portfolioSpec()
+
+setRiskFreeRate(MV.2)<- mean.r.free ##Rentabilidad Activo Libre de Riesgo
+setNFrontierPoints(MV.2) <- 20
+constraints <- "LongOnly"
+setTargetReturn(MV.2) <- 0.0012
+Frontera <- portfolioFrontier(as.timeSeries(qxts),spec=MV.2,constraints)
+Frontera
+
+
+# frontera eficiente
+frontierPlot(Frontera)
+grid()
+tangencyPoints(Frontera, pch = 19, col = "red", cex=2)
+tangencyLines(Frontera, col="darkgreen", pch=19, cex=2)
+minvariancePoints(Frontera, col="blue", pch=19, cex=2)
+monteCarloPoints(Frontera, mCsteps=500, col="green", cex=0.001)
+
+weightsPie(Frontera, pos = 8)
+
+
+# pesos en el portafolio eficiente
+col <- qualiPalette(ncol(qxts))
+weightsPlot(Frontera, col=col)
+
+# portafolio eficiente
+efPortfolio <- efficientPortfolio(as.timeSeries(qxts),MV.2,constraints)
+efPortfolio 
+
+# portafolio tangente
+tgPortfolio <- tangencyPortfolio(as.timeSeries(qxts),MV.2,constraints)
+tgPortfolio
+
+weightsPie(efPortfolio, col=col )
+mtext(text = "Portafolio eficiente", side = 3, line = 1.5,
+      font = 2, cex = 0.7, adj = 0)
+
+
+weightsPie(tgPortfolio, col=col)
+mtext(text = "Portafolio tangente", side = 3, line = 1.5,
+      font = 2, cex = 0.7, adj = 0)
